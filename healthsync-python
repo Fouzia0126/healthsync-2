@@ -1,0 +1,215 @@
+from flask import Flask, render_template, jsonify, request, redirect, url_for
+import json
+from datetime import datetime, timedelta
+import os
+
+app = Flask(__name__)
+
+# Mock data storage (in a real app, we would use a database)
+class MemStorage:
+    def __init__(self):
+        self.users = {
+            1: {
+                "id": 1,
+                "username": "demo",
+                "firstName": "Alex",
+                "lastName": "Johnson",
+                "email": "alex@example.com",
+                "phone": "+1 (555) 123-4567"
+            }
+        }
+        
+        self.health_data = [
+            {"id": 1, "userId": 1, "type": "heartRate", "value": 72, "timestamp": (datetime.now() - timedelta(hours=1)).isoformat()},
+            {"id": 2, "userId": 1, "type": "heartRate", "value": 75, "timestamp": (datetime.now() - timedelta(hours=2)).isoformat()},
+            {"id": 3, "userId": 1, "type": "heartRate", "value": 70, "timestamp": (datetime.now() - timedelta(hours=3)).isoformat()},
+            {"id": 4, "userId": 1, "type": "steps", "value": 8472, "timestamp": datetime.now().isoformat()}
+        ]
+        
+        self.water_intakes = [
+            {"id": 1, "userId": 1, "amount": 250, "timestamp": (datetime.now() - timedelta(hours=4)).isoformat()},
+            {"id": 2, "userId": 1, "amount": 350, "timestamp": (datetime.now() - timedelta(hours=2)).isoformat()},
+            {"id": 3, "userId": 1, "amount": 200, "timestamp": (datetime.now() - timedelta(hours=1)).isoformat()},
+            {"id": 4, "userId": 1, "amount": 400, "timestamp": datetime.now().isoformat()}
+        ]
+        
+        self.fitness_goals = [
+            {"id": 1, "userId": 1, "name": "Daily Steps", "target": 10000, "current": 8472, "unit": "steps", "icon": "steps", "color": "#059669"},
+            {"id": 2, "userId": 1, "name": "Calories Burned", "target": 500, "current": 310, "unit": "kcal", "icon": "flame", "color": "#d97706"},
+            {"id": 3, "userId": 1, "name": "Active Minutes", "target": 60, "current": 26, "unit": "min", "icon": "clock", "color": "#4f46e5"}
+        ]
+        
+        self.reminders = [
+            {"id": 1, "userId": 1, "title": "Blood Pressure Medicine", "description": "1 pill", "time": "09:00", "type": "medication", "isCompleted": False},
+            {"id": 2, "userId": 1, "title": "Drink Water", "description": "250ml", "time": "11:00", "type": "water", "isCompleted": False}
+        ]
+        
+        self.emergency_contacts = [
+            {"id": 1, "userId": 1, "name": "John Smith", "phone": "+1 (555) 123-4567", "relationship": "Family"},
+            {"id": 2, "userId": 1, "name": "Dr. Maria Davis", "phone": "+1 (555) 987-6543", "relationship": "Doctor"}
+        ]
+        
+    def get_user(self, user_id):
+        return self.users.get(user_id)
+    
+    def get_health_data(self, user_id, data_type=None):
+        if data_type:
+            return [data for data in self.health_data if data["userId"] == user_id and data["type"] == data_type]
+        return [data for data in self.health_data if data["userId"] == user_id]
+    
+    def get_water_intakes(self, user_id):
+        return [intake for intake in self.water_intakes if intake["userId"] == user_id]
+    
+    def get_total_water_intake(self, user_id):
+        intakes = self.get_water_intakes(user_id)
+        return sum(intake["amount"] for intake in intakes)
+    
+    def get_fitness_goals(self, user_id):
+        return [goal for goal in self.fitness_goals if goal["userId"] == user_id]
+    
+    def get_reminders(self, user_id, reminder_type=None):
+        if reminder_type:
+            return [reminder for reminder in self.reminders if reminder["userId"] == user_id and reminder["type"] == reminder_type]
+        return [reminder for reminder in self.reminders if reminder["userId"] == user_id]
+    
+    def get_emergency_contacts(self, user_id):
+        return [contact for contact in self.emergency_contacts if contact["userId"] == user_id]
+
+
+# Initialize storage
+storage = MemStorage()
+
+# Helper functions
+def calculate_progress(current, target):
+    return int((current / target) * 100) if target > 0 else 0
+
+@app.route('/')
+def index():
+    user_id = 1  # Demo user
+    user = storage.get_user(user_id)
+    
+    # Get health data
+    heart_rate_data = storage.get_health_data(user_id, "heartRate")
+    current_heart_rate = heart_rate_data[0]["value"] if heart_rate_data else 0
+    
+    steps_data = storage.get_health_data(user_id, "steps")
+    current_steps = steps_data[0]["value"] if steps_data else 0
+    
+    # Get water intake
+    water_intakes = storage.get_water_intakes(user_id)
+    total_water = storage.get_total_water_intake(user_id) / 1000  # Convert to liters
+    
+    # Get goals
+    goals = storage.get_fitness_goals(user_id)
+    for goal in goals:
+        goal["progress"] = calculate_progress(goal["current"], goal["target"])
+    
+    # Get reminders
+    reminders = storage.get_reminders(user_id)
+    
+    # Get emergency contacts
+    contacts = storage.get_emergency_contacts(user_id)
+    
+    return render_template('index.html', 
+                           user=user,
+                           heart_rate=current_heart_rate,
+                           steps=current_steps,
+                           water_intake=total_water,
+                           goals=goals,
+                           reminders=reminders,
+                           contacts=contacts)
+
+@app.route('/api/user/<int:user_id>')
+def get_user(user_id):
+    user = storage.get_user(user_id)
+    if user:
+        return jsonify(user)
+    return jsonify({"error": "User not found"}), 404
+
+@app.route('/api/health-data/<int:user_id>')
+def get_health_data(user_id):
+    data_type = request.args.get('type')
+    data = storage.get_health_data(user_id, data_type)
+    return jsonify(data)
+
+@app.route('/api/water-intakes/<int:user_id>')
+def get_water_intakes(user_id):
+    intakes = storage.get_water_intakes(user_id)
+    total = storage.get_total_water_intake(user_id)
+    return jsonify({"intakes": intakes, "total": total})
+
+@app.route('/api/add-water/<int:user_id>', methods=['POST'])
+def add_water(user_id):
+    amount = request.json.get('amount', 0)
+    if amount > 0:
+        new_intake = {
+            "id": len(storage.water_intakes) + 1,
+            "userId": user_id,
+            "amount": amount,
+            "timestamp": datetime.now().isoformat()
+        }
+        storage.water_intakes.append(new_intake)
+        return jsonify({"success": True, "intake": new_intake})
+    return jsonify({"error": "Invalid amount"}), 400
+
+@app.route('/api/fitness-goals/<int:user_id>')
+def get_fitness_goals(user_id):
+    goals = storage.get_fitness_goals(user_id)
+    return jsonify(goals)
+
+@app.route('/api/update-goal/<int:goal_id>', methods=['POST'])
+def update_goal(goal_id):
+    for goal in storage.fitness_goals:
+        if goal["id"] == goal_id:
+            target = request.json.get('target')
+            if target is not None:
+                goal["target"] = target
+            return jsonify({"success": True, "goal": goal})
+    return jsonify({"error": "Goal not found"}), 404
+
+@app.route('/api/reminders/<int:user_id>')
+def get_reminders(user_id):
+    reminder_type = request.args.get('type')
+    reminders = storage.get_reminders(user_id, reminder_type)
+    return jsonify(reminders)
+
+@app.route('/api/emergency-contacts/<int:user_id>')
+def get_emergency_contacts(user_id):
+    contacts = storage.get_emergency_contacts(user_id)
+    return jsonify(contacts)
+
+@app.route('/sos', methods=['POST'])
+def send_sos():
+    # In a real app, this would send actual messages to emergency contacts
+    user_id = request.json.get('userId', 1)
+    contacts = storage.get_emergency_contacts(user_id)
+    
+    # Simulate sending SOS messages
+    messages_sent = []
+    for contact in contacts:
+        messages_sent.append({
+            "contact": contact["name"],
+            "status": "sent",
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    return jsonify({
+        "success": True,
+        "message": "SOS alert sent to emergency contacts",
+        "messagesSent": messages_sent
+    })
+
+def main():
+    """
+    Main function to run the Flask application
+    """
+    # Make sure templates directory exists
+    if not os.path.exists('templates'):
+        os.makedirs('templates')
+    
+    print("Starting HealthSync app...")
+    print("Open http://localhost:5000 in your browser")
+    app.run(host='0.0.0.0', port=5000, debug=True)
+
+if __name__ == '__main__':
+    main()
